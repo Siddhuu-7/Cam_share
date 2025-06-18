@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Cam Share</string>
+    <string name="scan_barcode">Place a barcode inside the frame</string>
 </resources>

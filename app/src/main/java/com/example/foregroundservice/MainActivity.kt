@@ -1,22 +1,22 @@
 package com.example.foregroundservice
 
 import android.Manifest
-import android.content.ActivityNotFoundException
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-
-import android.graphics.Bitmap
+import android.content.ServiceConnection
+import android.graphics.BitmapFactory
 import android.net.wifi.WifiManager
+import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.util.Log
-import android.view.ViewGroup
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.Toast
-
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -24,51 +24,77 @@ import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.foregroundservice.ui.theme.ForegroundServiceTheme
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.MultiFormatWriter
-import com.google.zxing.common.BitMatrix
-import com.journeyapps.barcodescanner.*
 import kotlinx.coroutines.launch
-import java.net.InetAddress
-import java.net.NetworkInterface
-import java.util.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
 
 class MainActivity : ComponentActivity() {
-    private var isserverRunning = mutableStateOf(false)
-    private var isShareModeOn = mutableStateOf(false)
-    private  var isShareStarted =mutableStateOf(false)
+
+
+
+
+
+
+    private var myBoundService: CounterService ?=null
+    private var isBound=false
+    private val connection =object : ServiceConnection{
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val localbinder=service as CounterService.LocalBinder
+            myBoundService=localbinder.getService()
+            isBound=true
+
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            isBound=false
+            myBoundService=null
+        }
+    }
+
+
+    override fun onStart() {
+        super.onStart()
+        val intent= Intent(this, CounterService::class.java)
+        bindService(intent,connection,BIND_AUTO_CREATE)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unbindService(connection)
+        isBound=false
+    }
+
+    enum class AppState {
+        IDLE,           // Neither service is running
+        RECEIVING,      // Receive service is running
+        SHARING         // Share mode is active
+    }
+
+    private var currentState = mutableStateOf(AppState.IDLE)
     private lateinit var permissionLauncher: ActivityResultLauncher<Array<String>>
     private lateinit var permissionLaunch: ActivityResultLauncher<String>
-    private var ipAddress=mutableStateOf<String?>(null)
+
     lateinit var wifiP2pManager: WifiP2pManager
     lateinit var channel: WifiP2pManager.Channel
     private lateinit var wifiDirectManager: WifiDirectManager
-
-    fun updateAddress(newIP:String){
-        ipAddress.value=newIP
-    }
-    fun getIPaddress(): String?{
-        return ipAddress.value
-    }
-
-
-
-
-
+    private var nearByPeers: NearByPeers = NearByPeers()
+    private val wbl = WBL()
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,22 +102,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         wifiP2pManager = getSystemService(WIFI_P2P_SERVICE) as WifiP2pManager
         channel = wifiP2pManager.initialize(this, mainLooper, null)
-        wifiDirectManager = WifiDirectManager(this@MainActivity, wifiP2pManager, channel)
-        wifiDirectManager.registerReceiver()
-        wifiDirectManager.discoverPeers()
-        lifecycleScope.launch {
-            repeatOnLifecycle(Lifecycle.State.STARTED) {
-                wifiDirectManager.peers.collect { peerList ->
-                    if (peerList.isEmpty()) {
-                        Log.d("WiFiDirect", "No peers found")
-                    } else {
-                        peerList.forEach { device ->
-                            Log.d("WiFiDirect", "Device: ${device.deviceName} - ${device.deviceAddress}")
-                        }
-                    }
-                }
-            }
+        wifiDirectManager = WifiDirectManager(this@MainActivity, wifiP2pManager, channel){
+            Log.w("WIFIDIRECT","$it")
+            myBoundService?.setIpAddress(it!!)
         }
+wifiDirectManager.registerReceiver()
 
         val wifiManager = this@MainActivity.applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
 
@@ -105,7 +120,6 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this@MainActivity, "Wi-Fi is disabled. Please enable Wi-Fi.", Toast.LENGTH_SHORT).show()
         }
 
-
         permissionLaunch = registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
@@ -113,7 +127,6 @@ class MainActivity : ComponentActivity() {
                 Log.d("MainActivity", "Permission still denied")
             }
         }
-
 
         permissionLauncher = registerForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
@@ -134,86 +147,87 @@ class MainActivity : ComponentActivity() {
 
         checkAndRequestPermissions()
 
-
         setContent {
             ForegroundServiceTheme {
                 val permission = showRationalePermission.value
-                val context = LocalContext.current
-                val showScanner = remember { mutableStateOf(false) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     Column(
                         modifier = Modifier
                             .padding(innerPadding)
                             .fillMaxSize()
-                            .padding(16.dp),
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Top
                     ) {
                         Greeting(
-                            onStartService = {
-                                navigateTowifi()
-                                startCounterService() },
-                            OnStopService = { stopCounterService() },
-                            isserverRunning,
-                            onShareModeOn = {
-                                navigateTowifi()
-                                showScanner.value = true
-
+                            onStartReceiveService = {
+                                startReceiveService()
                             },
-                            onShowscanner = {
-                                if(showScanner.value)showScanner.value = false
-                                else showScanner.value = true
+                            onStopReceiveService = {
+                                stopReceiveService()
                             },
-                            onShareModeOff = {
+                            onStartShareMode = {
+                                startShareMode()
+                            },
+                            onStopShareMode = {
                                 stopShareMode()
-                                showScanner.value = false
                             },
-                            isShareModeOn
+                            currentState = currentState
                         )
 
-                        Spacer(modifier = Modifier.height(24.dp))
 
-                        if (isserverRunning.value) {
-                            val ipAddress = getDeviceIpAddress() ?: "Unknown IP"
-                            Text("Device IP: $ipAddress", style = MaterialTheme.typography.bodyLarge)
-                            Spacer(modifier = Modifier.height(12.dp))
-                            QrCodeDisplay(ipAddress, size = 500)
-                        }
+                        if (currentState.value == AppState.SHARING) {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            var connectedDevice by remember { mutableStateOf<WifiP2pDevice?>(null) }
+                            var failedDevice by remember { mutableStateOf<WifiP2pDevice?>(null) }
 
-                        if (showScanner.value) {
-                            isShareModeOn.value = true
-                            QRScannerView(context = context) { result ->
-                                showScanner.value = false
-                                updateAddress(result)
-                                shareImages()
-                                Log.d("QRScanner", "Scanned result: $result")
-
-                            }
-                        }
-
-                        if (showDialog.value && permission != null) {
-                            AlertDialog(
-                                onDismissRequest = { showDialog.value = false },
-                                title = { Text("Permission Required") },
-                                text = { Text("This permission is needed to properly use the app.") },
-                                confirmButton = {
-                                    TextButton(onClick = {
-                                        permissionLaunch.launch(permission)
-                                        showDialog.value = false
-                                    }) {
-                                        Text("Allow")
-                                    }
+                            nearByPeers.DeviceListArea(
+                                wifiDirectManager,
+                                onRefresh = {
+                                    wifiDirectManager.discoverPeers()
                                 },
-                                dismissButton = {
-                                    TextButton(onClick = {
-                                        showDialog.value = false
-                                    }) {
-                                        Text("Cancel")
-                                    }
-                                }
+                                launqr = { device ->
+                                    wifiDirectManager.connect(device,
+                                        response = { it ->
+                                            showConnectiondNotification(it.deviceName)
+                                            Log.d("FROM CONNECTION", it.deviceAddress)
+                                            connectedDevice = it
+                                        },
+                                        failedresponse = { it ->
+                                            failedDevice = it
+                                        }
+                                    )
+                                },
+                                connecteddeviceaddress = connectedDevice,
+                                connectionfailaddrtess = failedDevice?.deviceAddress
                             )
                         }
+                    }
+
+                    wbl.CheckAndAskServicesUI()
+
+                    if (showDialog.value && permission != null) {
+                        AlertDialog(
+                            onDismissRequest = { showDialog.value = false },
+                            title = { Text("Permission Required") },
+                            text = { Text("This permission is needed to properly use the app.") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    permissionLaunch.launch(permission)
+                                    showDialog.value = false
+                                }) {
+                                    Text("Allow")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = {
+                                    showDialog.value = false
+                                }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        )
                     }
                 }
             }
@@ -222,215 +236,266 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        wifiDirectManager.unregisterReceiver()
-    }
-    private fun getDeviceIpAddress(): String? {
-        try {
-            val interfaces = NetworkInterface.getNetworkInterfaces()
-            for (intf in Collections.list(interfaces)) {
-                val addrs = intf.inetAddresses
-                for (addr in Collections.list(addrs)) {
-                    if (!addr.isLoopbackAddress && addr is InetAddress) {
-                        val ip = addr.hostAddress
-                        if (ip.indexOf(':') < 0) return ip
-                    }
-                }
-            }
-        } catch (ex: Exception) {
-            Log.e("MainActivity", "Error getting IP address", ex)
-        }
-        return null
+
+        stopAllServices()
+
     }
 
     private fun checkAndRequestPermissions() {
-        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(
-                Manifest.permission.READ_MEDIA_IMAGES,
-                Manifest.permission.READ_MEDIA_VIDEO,
-                Manifest.permission.READ_MEDIA_AUDIO,
-                Manifest.permission.POST_NOTIFICATIONS,
-                Manifest.permission.CAMERA,
-                Manifest.permission.NEARBY_WIFI_DEVICES,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.CAMERA,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
+        val permissions = mutableListOf<String>()
+
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
+                permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
+                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+                permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            else -> {
+                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
         }
-        permissionLauncher.launch(permissions)
+
+        permissionLauncher.launch(permissions.toTypedArray())
     }
 
-    private fun startCounterService() {
+    private fun startReceiveService() {
         val serviceIntent = Intent(this, CounterService::class.java).apply {
             action = "START"
         }
         startService(serviceIntent)
-        isserverRunning.value = true
+        wifiDirectManager.createWifiDirectGroup()
+        currentState.value = AppState.RECEIVING
+        Log.d("MainActivity", "Started receive service")
     }
 
-    private fun stopCounterService() {
+    private fun stopReceiveService() {
         val intent = Intent(this, CounterService::class.java).apply {
             action = "STOP"
         }
         startService(intent)
-        isserverRunning.value = false
+
+        wifiDirectManager.removeGroup()
+        currentState.value = AppState.IDLE
+        Log.d("MainActivity", "Stopped receive service")
     }
-    private fun navigateTowifi(){
-        val intent = Intent()
-        intent.component = ComponentName(
-            "com.android.settings",
-            "com.android.settings.wifi.p2p.WifiP2pSettings"
-        )
-        try {
-            startActivity(intent)
-        } catch (e: ActivityNotFoundException) {
-            // Fallback to general Wi-Fi settings if specific Wi-Fi Direct page not found
-            startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS))
-        }
-    }
-    private fun shareImages() {
+
+    private fun startShareMode() {
         val intent = Intent(this, CounterService::class.java).apply {
             action = "SHARE"
         }
-
-
-        if(getIPaddress()!=null||getIPaddress()!=""){
-            isShareStarted.value=true
-            intent.putExtra("IpAddress",getIPaddress())
-            startService(intent)
-            updateAddress("")
-        }
-
-        isShareModeOn.value = true
+        startService(intent)
+        wifiDirectManager.discoverPeers()
+        currentState.value = AppState.SHARING
+        Log.d("MainActivity", "Started share mode")
     }
-    fun showscanner(showScanner: MutableState<Boolean>){
-        showScanner.value=true
-    }
+
     private fun stopShareMode() {
         val intent = Intent(this, CounterService::class.java).apply {
             action = "STOP_SHARE"
         }
-        if(isShareStarted.value){
-            startService(intent)
+        startService(intent)
+
+        currentState.value = AppState.IDLE
+        Log.d("MainActivity", "Stopped share mode")
+    }
+
+    private fun stopAllServices() {
+        val intent = Intent(this, CounterService::class.java).apply {
+            action = "STOP_SHARE"
         }
-        isShareModeOn.value = false
+        startService(intent)
+        wifiDirectManager.removeGroup()
+        wifiDirectManager.unregisterReceiver()
+        currentState.value = AppState.IDLE
     }
 
     companion object {
         val showDialog = mutableStateOf(false)
         val showRationalePermission = mutableStateOf<String?>(null)
     }
-}
-@Composable
-fun Greeting(
-    onStartService: () -> Unit,
-    OnStopService: () -> Unit,
-    isserverRunning: MutableState<Boolean>,
-    onShareModeOn: () -> Unit,
-    onShowscanner:()-> Unit,
-    onShareModeOff: () -> Unit,
-    isShareModeOn: MutableState<Boolean>
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
+
+    @Composable
+    fun Greeting(
+        onStartReceiveService: () -> Unit,
+        onStopReceiveService: () -> Unit,
+        onStartShareMode: () -> Unit,
+        onStopShareMode: () -> Unit,
+        currentState: MutableState<AppState>
     ) {
-        Text("Foreground Counter Service", style = MaterialTheme.typography.headlineMedium)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Title with custom styling
+            Text(
+                text = "Instant Image Share",
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Light,
+                    letterSpacing = 0.5.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
 
-        if (!isserverRunning.value && !isShareModeOn.value) {
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onStartService) {
-                Text("Start Counter Service")
-            }
+            Spacer(modifier = Modifier.height(32.dp))
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Button(onClick = onShareModeOn) {
-                Text("Start Share Mode")
-            }
-        } else {
-            val localSanner: MutableState<Boolean> =remember { mutableStateOf(false) }
-            if (isserverRunning.value) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = OnStopService) {
-                    Text("Stop Counter Service")
-                }
-            } else {
-
-                Spacer(modifier = Modifier.height(16.dp))
-                Button(onClick = onShareModeOff) {
-                    Text("Stop Share Mode")
-                }
-//                Button(onClick = { onShowscanner()
-//                localSanner.value=!localSanner.value
-//                }) {
-//                    Text(if(localSanner.value) "Show Scanner" else "Hide Scanner")
-//                }
-            }
-        }
-    }
-}
-
-@Composable
-fun QrCodeDisplay(data: String, size: Int = 500) {
-    val qrBitmap = remember(data) { generateQRCode(data, size, size) }
-
-    Image(
-        bitmap = qrBitmap.asImageBitmap(),
-        contentDescription = "QR Code",
-        modifier = Modifier
-            .size(size.dp)
-            .padding(16.dp)
-    )
-}
-
-fun generateQRCode(text: String, width: Int, height: Int): Bitmap {
-    val bitMatrix: BitMatrix = MultiFormatWriter().encode(
-        text,
-        BarcodeFormat.QR_CODE,
-        width,
-        height
-    )
-
-    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
-    for (x in 0 until width) {
-        for (y in 0 until height) {
-            bitmap.setPixel(x, y, if (bitMatrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-        }
-    }
-    return bitmap
-}
-
-@Composable
-fun QRScannerView(
-    context: Context,
-    onResult: (String) -> Unit
-) {
-    var hasScanned by remember { mutableStateOf(false) }
-
-    AndroidView(
-        factory = {
-            val scanner = DecoratedBarcodeView(context).apply {
-                layoutParams = ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-                barcodeView.decoderFactory = DefaultDecoderFactory(listOf(BarcodeFormat.QR_CODE))
-                decodeContinuous(object : BarcodeCallback {
-                    override fun barcodeResult(result: BarcodeResult?) {
-                        if (!hasScanned && result != null) {
-                            hasScanned = true
-                            onResult(result.text)
-                        }
+            when (currentState.value) {
+                AppState.IDLE -> {
+                    // Show both start buttons when idle
+                    Button(
+                        onClick = onStartReceiveService,
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 4.dp,
+                            pressedElevation = 8.dp
+                        )
+                    ) {
+                        Text(
+                            text = "Start Receive Service",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.Medium
+                            )
+                        )
                     }
 
-                    override fun possibleResultPoints(resultPoints: List<com.google.zxing.ResultPoint>) {}
-                })
-            }
-            scanner.resume()
-            scanner
-        },
-        update = { it.resume() }
-    )
+                    Spacer(modifier = Modifier.height(16.dp))
 
+                    Button(
+                        onClick = onStartShareMode,
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary,
+                            contentColor = MaterialTheme.colorScheme.onSecondary
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 4.dp,
+                            pressedElevation = 8.dp
+                        )
+                    ) {
+                        Text(
+                            text = "Start Share Mode (Scan QR)",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.Medium
+                            )
+                        )
+                    }
+                }
+
+                AppState.RECEIVING -> {
+                    // Show stop receive button and QR code
+                    Button(
+                        onClick = onStopReceiveService,
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 4.dp,
+                            pressedElevation = 8.dp
+                        )
+                    ) {
+                        Text(
+                            text = "Stop Image Receive Service",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.Medium
+                            )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+                    DisplayImageFromAssets("sgnl.png")
+                }
+
+                AppState.SHARING -> {
+                    // Show stop share button
+                    Button(
+                        onClick = onStopShareMode,
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 4.dp,
+                            pressedElevation = 8.dp
+                        )
+                    ) {
+                        Text(
+                            text = "Stop Share Mode",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.Medium
+                            )
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    fun DisplayImageFromAssets(fileName: String) {
+        val context = LocalContext.current
+        val assetManager = context.assets
+
+
+            val inputStream = assetManager.open(fileName)
+            val bitmap = BitmapFactory.decodeStream(inputStream)
+            inputStream.close()
+
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "QR Code for connection",
+                    modifier = Modifier.size(228.dp)
+                )
+            }
+
+    }
+    private fun showConnectiondNotification(device: String) {
+        val channelId = "file_received_channel"
+        val channelName = "Connection"
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
+            notificationManager.createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("File Received")
+            .setContentText("Connected to ${device}")
+            .setSmallIcon(R.drawable.ic_notification_icon)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+    }
 }

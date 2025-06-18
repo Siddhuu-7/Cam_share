@@ -16,18 +16,29 @@ import java.util.Collections
 
 class CounterService : Service() {
 
-    private val binder = Binder()
+    private val binder =LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val CHANNEL_ID = "counter_service_channel"
     private lateinit var tcpServer: TCp
-    private lateinit var contentObserver: MediaStoreChanges
+
+    private var contentObserver: MediaStoreChanges? = null
+
     private val UriQueue: ConcurrentLinkedQueue<Uri> = ConcurrentLinkedQueue()
     private val seenUris: MutableSet<Uri> = Collections.synchronizedSet(mutableSetOf())
     private val ipqueues : ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
     private var serverSocket: ServerSocket? = null
-    private var serverRunning = false
 
-    override fun onBind(intent: Intent) = binder
+    private var ip: String? = null
+    private var isServerRunning=false
+    private var isShareModeon=false
+inner class LocalBinder: Binder(){
+    fun getService(): CounterService=this@CounterService
+}
+    fun setIpAddress(Ip: String){
+       ip=Ip
+        Log.wtf("COUNTERSERVICE","IP is ASSESING TO ip $Ip")
+    }
+    override fun onBind(intent: Intent) =binder
 
     override fun onCreate() {
         super.onCreate()
@@ -37,7 +48,9 @@ class CounterService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
-        val ip=intent?.getStringExtra("IpAddress")
+
+
+
         if(!ipqueues.contains(ip.toString())){
             ipqueues.add(ip.toString())
         }
@@ -45,111 +58,93 @@ class CounterService : Service() {
 
         when (action) {
             "START" -> {
-                startForeground(1, buildNotification("TCP Server running..."))
-                serverRunning = true
 
-                serviceScope.launch {
-                    tcpServer = TCp(serviceScope, this@CounterService)
+                if (!isShareModeon){
+                    isServerRunning=true
+                    startForeground(1, buildNotification("Connection Established 🛜..."))
 
-                    tcpServer.createServer()
+
+                    serviceScope.launch {
+                        try {
+                            tcpServer = TCp(serviceScope, this@CounterService)
+                            tcpServer.createServer()
+                            Log.d("CounterService", "Server started.")
+                        } catch (e: Exception) {
+                            Log.e("CounterService", "Server start failed.", e)
+                        } finally {
+
+                        }
+                    }
                 }
-            }
+
+
+                }
+
 
             "SHARE" -> {
-                try {
-                    startForeground(1, buildNotification("File sharing started..."))
-                    Log.d("IPAddress",ip.toString())
-                } catch (e: Exception) {
-                    Log.e("CounterService", "Failed to start foreground service", e)
-                }
+              if (!isServerRunning){
 
-                try {
-                    contentObserver = MediaStoreChanges(this@CounterService) { uri ->
-                     serviceScope.launch{
-                         try {
-//                            val currentId = extractIdFromUri(uri.toString())
-//                            val firstSeen = seenUris.firstOrNull()
-//                            val firstSeenId = firstSeen?.toString()?.let { extractIdFromUri(it)
-                                delay(8000)
-                             if (
-                                 uri != null &&
-                                 seenUris.add(uri)
+                  isShareModeon=true
+                  try {
+                      startForeground(1, buildNotification("File sharing started..."))
+                      Log.d("IPAddress",ip.toString())
+                  } catch (e: Exception) {
+                      Log.e("CounterService", "Failed to start foreground service", e)
+                  }
+                  if (!::tcpServer.isInitialized) {
+                      tcpServer = TCp(serviceScope, this@CounterService)
+                  }
 
-                             ) {
+                  try {
+                      contentObserver = MediaStoreChanges(this@CounterService) { uri ->
+                          serviceScope.launch{
+                              try {
 
-                                 Log.d("CounterService", "New image received: $uri")
-//                                 UriQueue.add(uri)
-                                 tcpServer.sendImageToServer(ip.toString(), this@CounterService, uri)
-//                                 val ipThreads= CoroutineScope(SupervisorJob() + Dispatchers.IO)
-//                                 for(ip in ipqueues){
-//                                     ipThreads.launch{
-//                                         tcpServer.sendImageToServer(ip, this@CounterService, uri)
-//                                     }
-//                                 }
-//
-//                                 ipThreads.cancel()
+                                  delay(8000)
+                                  if (
+                                      uri != null &&
+                                      seenUris.add(uri)
 
-                             }
+                                  ) {
+                                      Log.d("CounterService", "New image received: $uri")
+                                      Log.w("COUNTERSERVICE","sending to $ip")
+                                      tcpServer.sendImageToServer(ip!!, this@CounterService, uri)
 
-                         } catch (e: Exception) {
-                             Log.e("CounterService", "Error in content observer callback", e)
-                         }
-                     }
-                    }
+                                  }
 
-                    contentObserver.register()
+                              } catch (e: Exception) {
+                                  Log.e("CounterService", "Error in content observer callback", e)
+                              }
+                          }
+                      }
 
-                } catch (e: Exception) {
-                    Log.e("CounterService", "Failed to register content observer", e)
-                }
+                      contentObserver?.register()
 
-                serviceScope.launch {
-                    try {
-                        if (!::tcpServer.isInitialized) {
-                            tcpServer = TCp(serviceScope, this@CounterService)
+                  } catch (e: Exception) {
+                      Log.e("CounterService", "Failed to register content observer", e)
+                  }
+              }
 
-                        }
 
-                        Log.d("IMGURIS", "Uri Loading")
 
-                        while (isActive) {
-                            try {
-                                var uri: Uri? = null
-
-                                if (UriQueue.isNotEmpty()) {
-                                    Log.d("IMGURIS", "Uri Loaded")
-                                    uri = UriQueue.poll()
-
-                                    if (uri != null) {
-                                        try {
-//                                            tcpServer.sendImageToServer("192.168.55.103", this@CounterService, uri)
-                                            Log.d("IMGURIS", "Image sent: $uri")
-                                        } catch (e: Exception) {
-                                            Log.e("CounterService", "Failed to send image to server: $uri", e)
-                                        }
-                                    }
-                                }
-
-                            } catch (e: Exception) {
-                                Log.e("CounterService", "Error while polling or sending URI", e)
-                            }
-                        }
-
-                    } catch (e: Exception) {
-                        Log.e("CounterService", "Error during TCP server initialization or loop", e)
-                    }
-                }
 
             }
 
             "STOP_SHARE" -> {
-                contentObserver.unregister()
-                startForeground(1, buildNotification("File sharing stopped"))
-//                stopSelf()
+isShareModeon=false
+                    contentObserver?.let {
+                        it.unregister()
+                        contentObserver = null
+                    }
+
+                    startForeground(1, buildNotification("File sharing stopped"))
+
             }
 
             "STOP" -> {
+               isServerRunning=false
                 stopSelf()
+                startForeground(1, buildNotification("Connection stopped 👾..."))
                 return START_NOT_STICKY
             }
         }
@@ -183,7 +178,7 @@ class CounterService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "Counter Service Channel",
+                "Instant Service Channel",
                 NotificationManager.IMPORTANCE_DEFAULT
             )
             val manager = getSystemService(NotificationManager::class.java)
@@ -191,21 +186,15 @@ class CounterService : Service() {
         }
     }
 
-    private fun buildNotification(context: String = "TCP Server running..."): Notification {
+    private fun buildNotification(context: String = "Instant Server running..."): Notification {
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Counter Service")
+            .setContentTitle("Instant Share Service")
             .setContentText(context)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_icon)
             .build()
     }
-    fun extractIdFromUri(uriString: String): Long? {
-        return try {
-            val uri = Uri.parse(uriString)
-            uri.lastPathSegment?.toLongOrNull()
-        } catch (e: Exception) {
-            null
-        }
-    }
+
 
 
 
