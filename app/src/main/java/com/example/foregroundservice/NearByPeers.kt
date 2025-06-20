@@ -1,7 +1,6 @@
 package com.example.foregroundservice
 
 import android.net.wifi.p2p.WifiP2pDevice
-import android.net.wifi.p2p.WifiP2pManager
 import android.util.Log
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.EaseInOut
@@ -25,7 +24,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,9 +33,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,17 +42,20 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,30 +73,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-class NearByPeers {
+class NearByPeers(
+    private val centralDataStore: CentralDataStore? = null
+) {
 
 
-private var connectedDeciivesAddress: WifiP2pDevice?=null
-    private var faileddeciivesAddress=mutableStateOf<String?>("")
+
     @Composable
     fun DeviceListArea(
-       manager: WifiDirectManager,
         onRefresh: () -> Unit,
         launqr: (WifiP2pDevice) -> Unit,
-       connecteddeviceaddress : WifiP2pDevice ?=null,
-       connectionfailaddrtess : String ?=null
 
     ) {
-        connectedDeciivesAddress=connecteddeviceaddress
-        faileddeciivesAddress.value=connectionfailaddrtess
-//        if (connectedDeciivesAddress.value!=null)
 
-        var peerList by remember { mutableStateOf<List<WifiP2pDevice>>(emptyList()) }
-        LaunchedEffect(manager) {
-            manager.peers.collect { newList ->
-                peerList = newList
-            }
+
+        val peerList = centralDataStore?.peers?.collectAsState(emptyList())?.value ?: emptyList()
+
+        LaunchedEffect(peerList) {
+            Log.d("PeerListTest", "Peer list updated: ${peerList.joinToString { it.deviceName ?: "Unknown" }}")
         }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -114,7 +111,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxSize()
-                    .padding(20.dp),
+                    .padding(16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Header Section
@@ -123,7 +120,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                     onRefresh = onRefresh
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Device List Section
                 DeviceDiscoveryContent(
@@ -140,7 +137,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
         onRefresh: () -> Unit
     ) {
         Column(
-            modifier = Modifier.padding(24.dp).fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Icon with badge
@@ -149,54 +146,53 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                     imageVector = Icons.Default.AccountCircle,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(48.dp)
                         .background(
                             MaterialTheme.colorScheme.primaryContainer,
                             CircleShape
                         )
-                        .padding(14.dp),
+                        .padding(12.dp),
                     tint = MaterialTheme.colorScheme.onPrimaryContainer
                 )
 
                 if (deviceCount > 0) {
                     Badge(
-                        modifier = Modifier.offset(x = 4.dp, y = (-4).dp),
+                        modifier = Modifier.offset(x = 2.dp, y = (-2).dp),
                         containerColor = MaterialTheme.colorScheme.error
                     ) {
                         Text(
                             text = deviceCount.toString(),
                             color = MaterialTheme.colorScheme.onError,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "Device Discovery",
-                style = MaterialTheme.typography.headlineMedium.copy(
+                text = "Nearby Devices",
+                style = MaterialTheme.typography.headlineSmall.copy(
                     fontWeight = FontWeight.Bold
                 ),
                 color = MaterialTheme.colorScheme.onSurface
             )
 
             Text(
-                text = if (deviceCount == 0) "Searching for nearby devices…"
+                text = if (deviceCount == 0) "Searching for devices..."
                 else "$deviceCount device${if (deviceCount == 1) "" else "s"} found",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             RefreshButton(onClick = onRefresh)
         }
     }
-
 
     @Composable
     private fun RefreshButton(onClick: () -> Unit) {
@@ -206,7 +202,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
             animationSpec = tween(1000, easing = LinearEasing),
             finishedListener = { isRefreshing = false }
         )
-        Log.d("CONNECTEDADDRESS","${connectedDeciivesAddress?.status}")
+
         Button(
             onClick = {
                 isRefreshing = true
@@ -214,23 +210,23 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(44.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary
             ),
             shape = RoundedCornerShape(12.dp),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp)
         ) {
             Icon(
                 imageVector = Icons.Default.Refresh,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(20.dp)
+                    .size(18.dp)
                     .graphicsLayer(rotationZ = rotation)
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (isRefreshing) "Searching..." else "Refresh Devices",
+                text = if (isRefreshing) "Searching..." else "Refresh",
                 style = MaterialTheme.typography.labelLarge.copy(
                     fontWeight = FontWeight.Medium
                 )
@@ -246,12 +242,11 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-
-                .shadow(6.dp, RoundedCornerShape(20.dp)),
+                .shadow(4.dp, RoundedCornerShape(16.dp)),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface
             ),
-            shape = RoundedCornerShape(20.dp)
+            shape = RoundedCornerShape(16.dp)
         ) {
             AnimatedContent(
                 targetState = peerList.isEmpty(),
@@ -263,7 +258,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                 if (isEmpty) {
                     EmptyDeviceState()
                 } else {
-                    DeviceGrid(
+                    DeviceList(
                         devices = peerList,
                         onDeviceClick = onDeviceClick
                     )
@@ -296,16 +291,16 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                 imageVector = Icons.Default.Refresh,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(80.dp)
+                    .size(64.dp)
                     .graphicsLayer(alpha = pulseAlpha),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = "No Devices Found",
-                style = MaterialTheme.typography.headlineSmall.copy(
+                style = MaterialTheme.typography.titleLarge.copy(
                     fontWeight = FontWeight.SemiBold
                 ),
                 color = MaterialTheme.colorScheme.onSurface,
@@ -313,7 +308,7 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
             )
 
             Text(
-                text = "Make sure Wi-Fi Direct is enabled on nearby devices and try refreshing",
+                text = "Make sure Wi-Fi Direct is enabled on nearby devices",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -323,85 +318,156 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
     }
 
     @Composable
-    private fun DeviceGrid(
+    private fun DeviceList(
         devices: List<WifiP2pDevice>,
         onDeviceClick: (WifiP2pDevice) -> Unit
     ) {
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 140.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            contentPadding = PaddingValues(4.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        Column(
+            modifier = Modifier.padding(12.dp)
         ) {
-            items(devices, key = { it.deviceAddress }) { device ->
-                DeviceCard(
-                    device = device,
-                    onClick = {
-                        Log.d("DeviceListArea", "Clicked device: ${device.deviceName}")
-                        onDeviceClick(device)
-                    }
+            // List Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Available Devices",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+
+                Text(
+                    text = "${devices.size} found",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Device List
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                itemsIndexed(devices, key = { _, device -> device.deviceAddress }) { index, device ->
+                    DeviceListItem(
+                        device = device,
+                        index = index + 1,
+                        onClick = {
+                            Log.d("DeviceListArea", "Clicked device: ${device.deviceName}")
+                            onDeviceClick(device)
+                        }
+                    )
+                }
             }
         }
     }
 
     @Composable
-    private fun DeviceCard(
+    private fun DeviceListItem(
         device: WifiP2pDevice,
+        index: Int,
         onClick: () -> Unit
     ) {
+        val connectionState = centralDataStore?.connection?.collectAsState("")?.value ?: ""
+
         var isPressed by remember { mutableStateOf(false) }
         val scale by animateFloatAsState(
-            targetValue = if (isPressed) 0.95f else 1f,
+            targetValue = if (isPressed) 0.98f else 1f,
             animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy)
         )
 
         Card(
             modifier = Modifier
+                .fillMaxWidth()
                 .graphicsLayer(scaleX = scale, scaleY = scale)
-                .clickable {
-                    isPressed = true
-                    onClick()
-                }
-                .shadow(4.dp, RoundedCornerShape(16.dp)),
+                .then(
+                    if (connectionState != "Connected") {
+                        Modifier.clickable {
+                            isPressed = true
+                            onClick()
+                        }
+                    } else Modifier
+                ),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+                containerColor = if (isPressed) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.1f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
             ),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(12.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
-            Column(
+            Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
                     .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Device Avatar
-                DeviceAvatar(
+                // Index Badge
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                    modifier = Modifier.size(32.dp),
+                    contentColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = index.toString(),
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                // Device Icon
+                DeviceIcon(
                     deviceName = device.deviceName,
                     deviceType = getDeviceTypeIcon(device)
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.width(16.dp))
 
-                // Device Name
-                Text(
-                    text = device.deviceName ?: "Unknown Device",
-                    style = MaterialTheme.typography.bodyLarge.copy(
-                        fontWeight = FontWeight.Medium
-                    ),
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                // Device Info
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = device.deviceName ?: "Unknown Device",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
+                    Text(
+                        text = device.deviceAddress,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
 
-                ConnectionStatusChip(device = device)
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    ConnectionStatusChip()
+                }
+
+                // Arrow Icon
+                if (connectionState != "Connected") {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
         }
 
@@ -414,15 +480,14 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
     }
 
     @Composable
-    private fun DeviceAvatar(
+    private fun DeviceIcon(
         deviceName: String,
         deviceType: ImageVector
     ) {
         Box(
-            modifier = Modifier.size(56.dp),
+            modifier = Modifier.size(40.dp),
             contentAlignment = Alignment.Center
         ) {
-
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -436,18 +501,17 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                         CircleShape
                     )
                     .border(
-                        2.dp,
+                        1.5.dp,
                         MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                         CircleShape
                     )
             )
 
-
-            if (deviceName.isNotBlank()) {
+            if (deviceName?.isNotBlank() == true) {
                 Text(
                     text = deviceName.first().uppercaseChar().toString(),
                     color = MaterialTheme.colorScheme.primary,
-                    fontSize = 24.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
             } else {
@@ -455,27 +519,27 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                     imageVector = deviceType,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
     }
 
     @Composable
-    private fun ConnectionStatusChip(device: WifiP2pDevice) {
-        val (statusText, statusColor) = when {
-            device.deviceAddress == connectedDeciivesAddress?.deviceAddress -> "Connected" to Color(0xFF4CAF50)
-            device.status == WifiP2pDevice.AVAILABLE -> "Available" to MaterialTheme.colorScheme.primary
-            device.deviceAddress == faileddeciivesAddress.value-> "Failed" to MaterialTheme.colorScheme.error
-            device.status == WifiP2pDevice.UNAVAILABLE -> "Unavailable" to MaterialTheme.colorScheme.outline
-            else -> "Available" to MaterialTheme.colorScheme.outline
+    private fun ConnectionStatusChip() {
+        val connectionState = centralDataStore?.connection?.collectAsState("")?.value ?: ""
+        val statusText = if (connectionState.isNotBlank()) connectionState else "Available"
+
+        val statusColor = when (statusText) {
+            "Connected" -> Color(0xFF4CAF50)
+            "Connecting..." -> MaterialTheme.colorScheme.primary
+            "Failed" -> MaterialTheme.colorScheme.error
+            else -> MaterialTheme.colorScheme.outline
         }
 
-
         Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = statusColor.copy(alpha = 0.15f),
-            modifier = Modifier.padding(horizontal = 4.dp)
+            shape = RoundedCornerShape(8.dp),
+            color = statusColor.copy(alpha = 0.12f)
         ) {
             Text(
                 text = statusText,
@@ -483,15 +547,14 @@ private var connectedDeciivesAddress: WifiP2pDevice?=null
                     fontWeight = FontWeight.Medium
                 ),
                 color = statusColor,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
             )
         }
     }
 
     private fun getDeviceTypeIcon(device: WifiP2pDevice): ImageVector {
         return when {
-            device.deviceName.contains("phone", ignoreCase = true) -> Icons.Default.Phone
-
+            device.deviceName?.contains("phone", ignoreCase = true) == true -> Icons.Default.Phone
             else -> Icons.Default.Info
         }
     }

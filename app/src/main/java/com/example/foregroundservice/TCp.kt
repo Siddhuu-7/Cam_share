@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -15,8 +16,13 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.BufferedReader
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -24,9 +30,12 @@ import java.io.File
 import java.io.FileOutputStream
 
 import java.io.InputStream
+import java.io.InputStreamReader
 import java.io.OutputStream
+import java.io.PrintWriter
+import java.net.InetAddress
 
-class TCp(
+open class TCp(
     private val serviceScope: CoroutineScope,
     private val context: Context
 ) {
@@ -59,7 +68,9 @@ class TCp(
             Log.d("CounterService", "Server stopped")
         }
     }
-
+    fun stopServer(){
+        serverSocket?.close()
+    }
     private suspend fun handleClientSafely(client: Socket) {
         try {
             handleClient(client)
@@ -261,5 +272,100 @@ class FileOperation(private val context: Context) {
         } finally {
             fos?.close()
         }
+    }
+
+
+}
+class DataExchange(
+    private val serviceScope: CoroutineScope,
+    private val context: Context
+) {
+    private val serverPort = 8888
+    private var serverSocket: ServerSocket? = null
+    private var serverJob: Job? = null
+
+    private val localIP = getLocalIpAddress(context)
+
+    fun startServer() {
+        if (serverJob?.isActive == true) {
+            Log.d("DataExchange", "Server already running")
+            return
+        }
+
+        serverJob = serviceScope.launch(Dispatchers.IO) {
+            try {
+                serverSocket = ServerSocket(serverPort).apply {
+                    soTimeout = 1000 // 1s timeout to check cancellation
+                }
+                Log.d("DataExchange", "Server started on port $serverPort")
+
+                while (isActive) {
+                    try {
+                        val client = serverSocket!!.accept()
+                        launch {
+                            val inputStream = client.getInputStream()
+                            val metadataReader = BufferedReader(InputStreamReader(inputStream))
+                            val metadata = metadataReader.readLine()
+                            Log.d("MetaData", metadata ?: "No metadata received")
+                            client.close()
+                        }
+                    } catch (e: SocketTimeoutException) {
+                        // Timeout is expected
+                    } catch (e: Exception) {
+                        Log.e("DataExchange", "Accept error: ${e.message}")
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DataExchange", "Server error: ${e.message}")
+            } finally {
+                try {
+                    serverSocket?.close()
+                    Log.d("DataExchange", "Server socket closed")
+                } catch (e: Exception) {
+                    Log.e("DataExchange", "Close error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun stopServer() {
+        try {
+            serverJob?.cancel()
+            serverSocket?.close()
+            Log.w("DataExchange", "Server stop requested")
+        } catch (e: Exception) {
+            Log.e("DataExchange", "Server stop failed: ${e.message}")
+        }
+    }
+
+    fun client(metaData: String?) {
+        serviceScope.launch(Dispatchers.IO) {
+            var socket: Socket? = null
+            try {
+                socket = Socket(localIP, serverPort)
+                val writer = PrintWriter(socket.getOutputStream(), true)
+                writer.println(metaData)
+                Log.d("Client", "Metadata sent: $metaData")
+            } catch (e: Exception) {
+                Log.e("Client", "Error: ${e.message}")
+            } finally {
+                socket?.close()
+            }
+        }
+    }
+
+    private fun getLocalIpAddress(context: Context): String? {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val ipInt = wifiManager.connectionInfo.ipAddress
+        if (ipInt == 0) return null
+        return InetAddress.getByAddress(
+            byteArrayOf(
+                (ipInt and 0xff).toByte(),
+                (ipInt shr 8 and 0xff).toByte(),
+                (ipInt shr 16 and 0xff).toByte(),
+                (ipInt shr 24 and 0xff).toByte()
+            )
+        ).hostAddress
     }
 }

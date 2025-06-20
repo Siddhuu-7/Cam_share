@@ -26,7 +26,7 @@ class CounterService : Service() {
     private val UriQueue: ConcurrentLinkedQueue<Uri> = ConcurrentLinkedQueue()
     private val seenUris: MutableSet<Uri> = Collections.synchronizedSet(mutableSetOf())
     private val ipqueues : ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
-    private var serverSocket: ServerSocket? = null
+
 
     private var ip: String? = null
     private var isServerRunning=false
@@ -68,7 +68,7 @@ inner class LocalBinder: Binder(){
                         try {
                             tcpServer = TCp(serviceScope, this@CounterService)
                             tcpServer.createServer()
-                            Log.d("CounterService", "Server started.")
+
                         } catch (e: Exception) {
                             Log.e("CounterService", "Server start failed.", e)
                         } finally {
@@ -131,11 +131,12 @@ inner class LocalBinder: Binder(){
             }
 
             "STOP_SHARE" -> {
-isShareModeon=false
+                    isShareModeon=false
                     contentObserver?.let {
                         it.unregister()
                         contentObserver = null
                     }
+
 
                     startForeground(1, buildNotification("File sharing stopped"))
 
@@ -144,6 +145,7 @@ isShareModeon=false
             "STOP" -> {
                isServerRunning=false
                 stopSelf()
+                tcpServer.stopServer()
                 startForeground(1, buildNotification("Connection stopped 👾..."))
                 return START_NOT_STICKY
             }
@@ -160,7 +162,7 @@ isShareModeon=false
 
 
         try {
-            serverSocket?.close()
+
             Log.d("CounterService", "Server socket closed")
         } catch (e: Exception) {
             Log.e("CounterService", "Error closing socket: ${e.message}")
@@ -187,10 +189,19 @@ isShareModeon=false
     }
 
     private fun buildNotification(context: String = "Instant Server running..."): Notification {
-
+             val intent= Intent(this, MainActivity::class.java).apply {
+                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+             }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Instant Share Service")
             .setContentText(context)
+            .setContentIntent(pendingIntent)
             .setSmallIcon(R.drawable.ic_notification_icon)
             .build()
     }

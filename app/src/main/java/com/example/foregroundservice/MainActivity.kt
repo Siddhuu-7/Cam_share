@@ -1,11 +1,7 @@
 package com.example.foregroundservice
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.ComponentName
-import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.graphics.BitmapFactory
@@ -22,6 +18,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,11 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
 import com.example.foregroundservice.ui.theme.ForegroundServiceTheme
-import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,9 +35,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
-import androidx.core.app.NotificationCompat
+
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+
 
 class MainActivity : ComponentActivity() {
+
 
 
 
@@ -93,20 +90,39 @@ class MainActivity : ComponentActivity() {
     lateinit var wifiP2pManager: WifiP2pManager
     lateinit var channel: WifiP2pManager.Channel
     private lateinit var wifiDirectManager: WifiDirectManager
-    private var nearByPeers: NearByPeers = NearByPeers()
+
     private val wbl = WBL()
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val centralDataStore: CentralDataStore by viewModels()
+
+        var nearByPeers: NearByPeers = NearByPeers(centralDataStore)
+
         wifiP2pManager = getSystemService(WIFI_P2P_SERVICE) as WifiP2pManager
         channel = wifiP2pManager.initialize(this, mainLooper, null)
-        wifiDirectManager = WifiDirectManager(this@MainActivity, wifiP2pManager, channel){
+        wifiDirectManager = WifiDirectManager(this@MainActivity,
+            wifiP2pManager,
+            channel,
+            centralDataStore,
+        ){
             Log.w("WIFIDIRECT","$it")
             myBoundService?.setIpAddress(it!!)
         }
-wifiDirectManager.registerReceiver()
+        wifiDirectManager.registerReceiver()
+        lifecycleScope.launch{
+            wifiDirectManager.peers.collect { newList ->
+                centralDataStore.updatePeers(newList)
+            }
+
+        }
+        lifecycleScope.launch{
+            centralDataStore.connection.collect {
+                Log.d("CONNECTIONSTATE", "status:${it}")
+            }
+        }
 
         val wifiManager = this@MainActivity.applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
 
@@ -169,9 +185,11 @@ wifiDirectManager.registerReceiver()
                             },
                             onStartShareMode = {
                                 startShareMode()
+
                             },
                             onStopShareMode = {
                                 stopShareMode()
+                                wifiDirectManager.removeGroup()
                             },
                             currentState = currentState
                         )
@@ -179,28 +197,21 @@ wifiDirectManager.registerReceiver()
 
                         if (currentState.value == AppState.SHARING) {
                             Spacer(modifier = Modifier.height(24.dp))
-                            var connectedDevice by remember { mutableStateOf<WifiP2pDevice?>(null) }
+
                             var failedDevice by remember { mutableStateOf<WifiP2pDevice?>(null) }
 
                             nearByPeers.DeviceListArea(
-                                wifiDirectManager,
+
                                 onRefresh = {
                                     wifiDirectManager.discoverPeers()
                                 },
                                 launqr = { device ->
                                     wifiDirectManager.connect(device,
-                                        response = { it ->
-                                            showConnectiondNotification(it.deviceName)
-                                            Log.d("FROM CONNECTION", it.deviceAddress)
-                                            connectedDevice = it
-                                        },
                                         failedresponse = { it ->
                                             failedDevice = it
                                         }
                                     )
-                                },
-                                connecteddeviceaddress = connectedDevice,
-                                connectionfailaddrtess = failedDevice?.deviceAddress
+                                }
                             )
                         }
                     }
@@ -242,33 +253,54 @@ wifiDirectManager.registerReceiver()
     }
 
     private fun checkAndRequestPermissions() {
-        val permissions = mutableListOf<String>()
+        val permissionsToRequest = mutableListOf<String>()
 
         when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> {
-                permissions.add(Manifest.permission.READ_MEDIA_IMAGES)
-                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-                permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                permissionsToRequest.add(Manifest.permission.READ_MEDIA_IMAGES)
+                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+                permissionsToRequest.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+
+
             }
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+
+                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+
+
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
+
+
+                permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
-            else -> {
-                permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-                permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
-                permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> { // API 29 (Android 10) & API 30 (Android 11)
+                // Permissions for Android 10 & 11
+                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+
+
+            }
+            else -> { // API 24 (Android 7) up to API 28 (Android 9)
+                // Permissions for Android 7, 8, 9
+                permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION) // CRITICAL for Bluetooth scanning on these versions
+                permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+                permissionsToRequest.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
 
-        permissionLauncher.launch(permissions.toTypedArray())
+        if (permissionsToRequest.isNotEmpty()) {
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
+        }
     }
 
     private fun startReceiveService() {
         val serviceIntent = Intent(this, CounterService::class.java).apply {
             action = "START"
         }
+
         startService(serviceIntent)
         wifiDirectManager.createWifiDirectGroup()
         currentState.value = AppState.RECEIVING
@@ -402,7 +434,7 @@ wifiDirectManager.registerReceiver()
                 }
 
                 AppState.RECEIVING -> {
-                    // Show stop receive button and QR code
+
                     Button(
                         onClick = onStopReceiveService,
                         modifier = Modifier
@@ -431,7 +463,7 @@ wifiDirectManager.registerReceiver()
                 }
 
                 AppState.SHARING -> {
-                    // Show stop share button
+
                     Button(
                         onClick = onStopShareMode,
                         modifier = Modifier
@@ -465,37 +497,21 @@ wifiDirectManager.registerReceiver()
         val assetManager = context.assets
 
 
-            val inputStream = assetManager.open(fileName)
-            val bitmap = BitmapFactory.decodeStream(inputStream)
-            inputStream.close()
+        val inputStream = assetManager.open(fileName)
+        val bitmap = BitmapFactory.decodeStream(inputStream)
+        inputStream.close()
 
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "QR Code for connection",
-                    modifier = Modifier.size(228.dp)
-                )
-            }
-
-    }
-    private fun showConnectiondNotification(device: String) {
-        val channelId = "file_received_channel"
-        val channelName = "Connection"
-        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
-            notificationManager.createNotificationChannel(channel)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "QR Code for connection",
+                modifier = Modifier.size(228.dp)
+            )
         }
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("File Received")
-            .setContentText("Connected to ${device}")
-            .setSmallIcon(R.drawable.ic_notification_icon)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .build()
-        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+
     }
+
 }

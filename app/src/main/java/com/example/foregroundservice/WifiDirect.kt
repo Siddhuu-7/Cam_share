@@ -1,11 +1,16 @@
 package com.example.foregroundservice
 
 import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -14,17 +19,31 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
-import androidx.lifecycle.ViewModel
+import androidx.core.app.NotificationCompat
+
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+
+
 
 class WifiDirectManager(
     private val context: Context,
     private val wifiP2pManager: WifiP2pManager,
     private val channel: WifiP2pManager.Channel,
+    private val centralDataStore: CentralDataStore? = null,
     ipAddress :((String?)->Unit)={}
+
+
 ) {
+    enum class ConnectionSate{
+        Connecting,
+        Connected,
+        Failed,
+        Disconnected
+    }
+
+
 
     private val _peers = MutableStateFlow<List<WifiP2pDevice>>(emptyList())
     val peers: StateFlow<List<WifiP2pDevice>> get() = _peers
@@ -77,27 +96,59 @@ class WifiDirectManager(
                 }
 
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
-                    wifiP2pManager.requestConnectionInfo(channel, object : WifiP2pManager.ConnectionInfoListener {
-                        override fun onConnectionInfoAvailable(info: WifiP2pInfo?) {
-                            if (info == null) return
 
-                            if (info.groupFormed) {
-                                if (info.isGroupOwner) {
-                                    Toast.makeText(context, "connection Established.", Toast.LENGTH_SHORT).show()
-                                    Log.d("WifiP2p", "I am Group Owner.")
+                    val networkInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO, android.net.NetworkInfo::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO) as? android.net.NetworkInfo
+                    }
+                    if (networkInfo?.isConnected == true) {
+                        wifiP2pManager.requestConnectionInfo(
+                            channel,
+                            object : WifiP2pManager.ConnectionInfoListener {
+                                override fun onConnectionInfoAvailable(info: WifiP2pInfo?) {
+                                    if (info == null) {
+                                        centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
+                                        return
 
-                                } else {
-                                    val serverIp = info.groupOwnerAddress.hostAddress
-                                    Toast.makeText(context, "Client connected to Group Owner with IP $serverIp.", Toast.LENGTH_SHORT).show()
-                                    Log.d("WifiP2p", "Client connected to Group Owner with IP $serverIp.")
-                                    ipAddress(serverIp)
+                                    }
 
+                                    if (info.groupFormed) {
+                                        if (info.isGroupOwner) {
+                                            Toast.makeText(
+                                                context,
+                                                "connection Established.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+
+                                            Log.d("WifiP2p", "I am Group Owner.")
+
+                                        } else {
+                                            val serverIp = info.groupOwnerAddress.hostAddress
+                                            Toast.makeText(
+                                                context,
+                                                "Client connected to Group Owner with IP $serverIp.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                            Log.d(
+                                                "WifiP2p",
+                                                "Client connected to Group Owner with IP $serverIp."
+                                            )
+                                            ipAddress(serverIp)
+                                            centralDataStore?.updateConnection(ConnectionSate.Connected.toString())
+                                            showConnectiondNotification(info.groupOwnerAddress.toString())
+
+
+                                        }
+                                    }
 
                                 }
-                            }
+                            })
 
-                        }
-                    })
+                    }else{
+                        centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
+                    }
                 }
             }
         }
@@ -122,14 +173,16 @@ class WifiDirectManager(
 
         wifiP2pManager.connect(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-//                response("Connecting ${device.deviceName}.")
+                centralDataStore?.updateConnection(ConnectionSate.Connecting.toString())
                response(device)
-                Log.d("WifiP2p", "Connected successfully.${device.deviceAddress}")
+                Log.d("WifiP2p", "Connecting.${device.deviceAddress}")
+
 
             }
 
             override fun onFailure(reason: Int) {
                 failedresponse(device)
+                centralDataStore?.updateConnection(ConnectionSate.Failed.toString())
                 Log.d("WifiP2p", "Connectivity failed with code $reason.")
             }
         })
@@ -179,12 +232,14 @@ class WifiDirectManager(
     fun createWifiDirectGroup() {
         val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+
         } else {
             context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
 
         if (!hasPermission) {
             Toast.makeText(context, "Permission missing.", Toast.LENGTH_SHORT).show()
+            centralDataStore?.updateIsGroupCreation(false)
             return
         }
 
@@ -192,6 +247,7 @@ class WifiDirectManager(
             override fun onSuccess() {
                 Toast.makeText(context, "Group is being created.", Toast.LENGTH_SHORT).show()
                 Log.d("WifiP2p", "Group is being created.")
+                centralDataStore?.updateIsGroupCreation(true)
 
 
             }
@@ -200,6 +256,7 @@ class WifiDirectManager(
                 Toast.makeText(context, "Start Again.", Toast.LENGTH_SHORT).show()
                 Log.d("WifiP2p", "Create group failed with code $reason.")
                 removeGroup()
+                centralDataStore?.updateIsGroupCreation(false)
             }
         })
     }
@@ -230,6 +287,35 @@ class WifiDirectManager(
         context.unregisterReceiver(receiver)
         Log.d("WifiP2p", "Receiver unregistered.")
     }
+    private fun showConnectiondNotification(device: String) {
+        val channelId = "Connection1234"
+        val channelName = "Connection"
+        val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
+            notificationManager.createNotificationChannel(channel)
+        }
+        val intent= Intent(context, MainActivity::class.java).apply {
+            flags= Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent=PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context,channelId)
+            .setContentTitle("File Received")
+            .setContentText("Connected to ${device}")
+            .setContentIntent(pendingIntent)
+            .setSmallIcon(R.drawable.ic_notification_icon)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+    }
+
 }
 
 
