@@ -53,12 +53,12 @@ class WBL() {
     }
 
 
-    private fun isBluetoothEnabled(context: Context): Boolean {
-        val bluetoothManager =
-            context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
-        return bluetoothAdapter?.isEnabled ?: false
-    }
+//    private fun isBluetoothEnabled(context: Context): Boolean {
+//        val bluetoothManager =
+//            context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+//        val bluetoothAdapter: BluetoothAdapter? = bluetoothManager?.adapter
+//        return bluetoothAdapter?.isEnabled ?: false
+//    }
 
 
 
@@ -70,7 +70,7 @@ class WBL() {
 
         var isLocationServiceOn by remember { mutableStateOf(isLocationEnabled(context)) }
         var isWifiOn by remember { mutableStateOf(isWifiEnabled(context)) }
-        var isBluetoothOn by remember { mutableStateOf(isBluetoothEnabled(context)) }
+//        var isBluetoothOn by remember { mutableStateOf(isBluetoothEnabled(context)) }
 
 
         DisposableEffect(lifecycleOwner) {
@@ -78,7 +78,7 @@ class WBL() {
                 if (event == Lifecycle.Event.ON_RESUME) {
                     isLocationServiceOn = isLocationEnabled(context)
                     isWifiOn = isWifiEnabled(context)
-                    isBluetoothOn = isBluetoothEnabled(context)
+//                    isBluetoothOn = isBluetoothEnabled(context)
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
@@ -88,11 +88,11 @@ class WBL() {
         }
 
 
-        val missingServices = remember(isLocationServiceOn, isWifiOn, isBluetoothOn) {
+        val missingServices = remember(isLocationServiceOn, isWifiOn) {
             mutableListOf<String>().apply {
                 if (!isLocationServiceOn) add("Location")
                 if (!isWifiOn) add("Wi-Fi")
-                if (!isBluetoothOn) add("Bluetooth")
+//                if (!isBluetoothOn) add("Bluetooth")
             }
         }
 
@@ -135,7 +135,7 @@ class WBL() {
                         when {
                             !isLocationServiceOn -> context.startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
                             !isWifiOn -> context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
-                            !isBluetoothOn -> context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+//                            !isBluetoothOn -> context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
                         }
 
                     }) {

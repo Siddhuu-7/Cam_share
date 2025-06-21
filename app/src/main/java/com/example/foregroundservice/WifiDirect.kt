@@ -10,7 +10,6 @@ import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -20,8 +19,9 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-
-
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -44,7 +44,8 @@ class WifiDirectManager(
     }
 
 
-
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val dataExchange= DataExchange(serviceScope,context)
     private val _peers = MutableStateFlow<List<WifiP2pDevice>>(emptyList())
     val peers: StateFlow<List<WifiP2pDevice>> get() = _peers
 
@@ -115,15 +116,8 @@ class WifiDirectManager(
                                     }
 
                                     if (info.groupFormed) {
+
                                         if (info.isGroupOwner) {
-                                            Toast.makeText(
-                                                context,
-                                                "connection Established.",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-
-                                            Log.d("WifiP2p", "I am Group Owner.")
-
                                         } else {
                                             val serverIp = info.groupOwnerAddress.hostAddress
                                             Toast.makeText(
@@ -137,14 +131,18 @@ class WifiDirectManager(
                                             )
                                             ipAddress(serverIp)
                                             centralDataStore?.updateConnection(ConnectionSate.Connected.toString())
-                                            showConnectiondNotification(info.groupOwnerAddress.toString())
+
+
+                                            dataExchange.client(serverIp)
 
 
                                         }
+
                                     }
 
                                 }
                             })
+
 
                     }else{
                         centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
@@ -287,34 +285,7 @@ class WifiDirectManager(
         context.unregisterReceiver(receiver)
         Log.d("WifiP2p", "Receiver unregistered.")
     }
-    private fun showConnectiondNotification(device: String) {
-        val channelId = "Connection1234"
-        val channelName = "Connection"
-        val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
-            notificationManager.createNotificationChannel(channel)
-        }
-        val intent= Intent(context, MainActivity::class.java).apply {
-            flags= Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent=PendingIntent.getActivity(
-            context,
-            0,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notification = NotificationCompat.Builder(context,channelId)
-            .setContentTitle("File Received")
-            .setContentText("Connected to ${device}")
-            .setContentIntent(pendingIntent)
-            .setSmallIcon(R.drawable.ic_notification_icon)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setAutoCancel(true)
-            .build()
 
-        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
-    }
 
 }
 

@@ -27,6 +27,7 @@ class MediaStoreChanges(private  val context: Context,private val onMediachange:
     }
     fun register(){
         context.contentResolver.registerContentObserver(
+
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             true,
             contentObserver
@@ -40,9 +41,7 @@ class MediaStoreChanges(private  val context: Context,private val onMediachange:
         Log.d("MediaStore","observer Unregistered")
         isregisterON.value=false
     }
-    fun isRegister(): Boolean{
-        return isregisterON.value
-    }
+
 
 
 }

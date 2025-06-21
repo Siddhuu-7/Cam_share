@@ -195,7 +195,7 @@ class MainActivity : ComponentActivity() {
                         )
 
 
-                        if (currentState.value == AppState.SHARING) {
+                        if (currentState.value == AppState.RECEIVING) {
                             Spacer(modifier = Modifier.height(24.dp))
 
                             var failedDevice by remember { mutableStateOf<WifiP2pDevice?>(null) }
@@ -268,9 +268,9 @@ class MainActivity : ComponentActivity() {
                 permissionsToRequest.add(Manifest.permission.READ_EXTERNAL_STORAGE)
 
 
-                permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
-                permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
-                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
+//                permissionsToRequest.add(Manifest.permission.BLUETOOTH_SCAN)
+//                permissionsToRequest.add(Manifest.permission.BLUETOOTH_ADVERTISE)
+//                permissionsToRequest.add(Manifest.permission.BLUETOOTH_CONNECT)
 
 
                 permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -296,47 +296,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startReceiveService() {
-        val serviceIntent = Intent(this, CounterService::class.java).apply {
-            action = "START"
-        }
-
-        startService(serviceIntent)
-        wifiDirectManager.createWifiDirectGroup()
-        currentState.value = AppState.RECEIVING
-        Log.d("MainActivity", "Started receive service")
-    }
-
-    private fun stopReceiveService() {
-        val intent = Intent(this, CounterService::class.java).apply {
-            action = "STOP"
-        }
-        startService(intent)
-
-        wifiDirectManager.removeGroup()
-        currentState.value = AppState.IDLE
-        Log.d("MainActivity", "Stopped receive service")
-    }
-
-    private fun startShareMode() {
-        val intent = Intent(this, CounterService::class.java).apply {
-            action = "SHARE"
-        }
-        startService(intent)
-        wifiDirectManager.discoverPeers()
-        currentState.value = AppState.SHARING
-        Log.d("MainActivity", "Started share mode")
-    }
-
-    private fun stopShareMode() {
-        val intent = Intent(this, CounterService::class.java).apply {
-            action = "STOP_SHARE"
-        }
-        startService(intent)
-
-        currentState.value = AppState.IDLE
-        Log.d("MainActivity", "Stopped share mode")
-    }
 
     private fun stopAllServices() {
         val intent = Intent(this, CounterService::class.java).apply {
@@ -458,8 +417,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    DisplayImageFromAssets("sgnl.png")
+
                 }
 
                 AppState.SHARING -> {
@@ -486,6 +444,8 @@ class MainActivity : ComponentActivity() {
                             )
                         )
                     }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    DisplayImageFromAssets("sgnl.png")
                 }
             }
         }
@@ -514,4 +474,46 @@ class MainActivity : ComponentActivity() {
 
     }
 
+    private fun startReceiveService() {
+        val serviceIntent = Intent(this, CounterService::class.java).apply {
+            action = "START"
+        }
+
+        startService(serviceIntent)
+        wifiDirectManager.discoverPeers()
+        currentState.value = AppState.RECEIVING
+        Log.d("MainActivity", "Started receive service")
+    }
+
+    private fun stopReceiveService() {
+        val intent = Intent(this, CounterService::class.java).apply {
+            action = "STOP"
+        }
+        startService(intent)
+
+        wifiDirectManager.removeGroup()
+        currentState.value = AppState.IDLE
+        Log.d("MainActivity", "Stopped receive service")
+    }
+
+    private fun startShareMode() {
+        val intent = Intent(this, CounterService::class.java).apply {
+            action = "SHARE"
+        }
+        startService(intent)
+
+        wifiDirectManager.createWifiDirectGroup()
+        currentState.value = AppState.SHARING
+        Log.d("MainActivity", "Started share mode")
+    }
+
+    private fun stopShareMode() {
+        val intent = Intent(this, CounterService::class.java).apply {
+            action = "STOP_SHARE"
+        }
+        startService(intent)
+
+        currentState.value = AppState.IDLE
+        Log.d("MainActivity", "Stopped share mode")
+    }
 }

@@ -1,17 +1,14 @@
 package com.example.foregroundservice
 
 import android.app.*
-
 import android.content.Intent
 import android.os.Binder
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
-import java.net.ServerSocket
-import  java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.ConcurrentLinkedQueue
 import android.net.Uri
-
 import java.util.Collections
 
 class CounterService : Service() {
@@ -22,11 +19,11 @@ class CounterService : Service() {
     private lateinit var tcpServer: TCp
 
     private var contentObserver: MediaStoreChanges? = null
-
-    private val UriQueue: ConcurrentLinkedQueue<Uri> = ConcurrentLinkedQueue()
+    private lateinit var dataExchange: DataExchange
+    private val retryUriQueue: ConcurrentLinkedQueue<Uri> = ConcurrentLinkedQueue()
     private val seenUris: MutableSet<Uri> = Collections.synchronizedSet(mutableSetOf())
     private val ipqueues : ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
-
+    private val retryqueueuriSet= Collections.synchronizedSet(mutableSetOf<Uri>())
 
     private var ip: String? = null
     private var isServerRunning=false
@@ -35,7 +32,7 @@ inner class LocalBinder: Binder(){
     fun getService(): CounterService=this@CounterService
 }
     fun setIpAddress(Ip: String){
-       ip=Ip
+//       ip=Ip
         Log.wtf("COUNTERSERVICE","IP is ASSESING TO ip $Ip")
     }
     override fun onBind(intent: Intent) =binder
@@ -51,9 +48,7 @@ inner class LocalBinder: Binder(){
 
 
 
-        if(!ipqueues.contains(ip.toString())){
-            ipqueues.add(ip.toString())
-        }
+
         Log.d("CounterService", "Service started with action: $action")
 
         when (action) {
@@ -94,21 +89,45 @@ inner class LocalBinder: Binder(){
                   if (!::tcpServer.isInitialized) {
                       tcpServer = TCp(serviceScope, this@CounterService)
                   }
+                  if(!::dataExchange.isInitialized){
+                      dataExchange= DataExchange(serviceScope,this@CounterService)
+                  }
 
                   try {
+                      serviceScope.launch{
+                          dataExchange.startServer(){it->
+                              ip=it
+                              Log.d("CLIENT","$ip")
+                              if(!ipqueues.contains(ip.toString())){
+                                  ipqueues.add(ip.toString())
+
+                              }
+                          }
+                      }
+
+
                       contentObserver = MediaStoreChanges(this@CounterService) { uri ->
                           serviceScope.launch{
+
                               try {
 
-                                  delay(8000)
+                                  delay(10000)
                                   if (
                                       uri != null &&
                                       seenUris.add(uri)
 
                                   ) {
                                       Log.d("CounterService", "New image received: $uri")
-                                      Log.w("COUNTERSERVICE","sending to $ip")
-                                      tcpServer.sendImageToServer(ip!!, this@CounterService, uri)
+                                     for(ip in ipqueues){
+                                         ip?.let {
+                                             Log.w("COUNTERSERVICE", "sending to $ip")
+                                         var success=    tcpServer.sendImageToServer(it, this@CounterService, uri)
+                                             if(!success && !retryUriQueue.contains(uri)){
+                                                 Log.d("RETRYQUEUE","uri loaded")
+                                                retryUriQueue.add(uri)
+                                             }
+                                         } ?: Log.w("COUNTERSERVICE", "Skipped null IP")
+                                     }
 
                                   }
 
@@ -117,6 +136,41 @@ inner class LocalBinder: Binder(){
                               }
                           }
                       }
+
+
+//                      in case of IllegalStateException occur
+                      serviceScope.launch {
+                          try {
+                              while (isActive) {
+                                  delay(15000)
+                                  val uri = retryUriQueue.poll()
+
+                                  uri?.let {
+                                      var allSuccess = true
+
+                                      for (ip in ipqueues) {
+                                          ip?.let {
+                                              val success = tcpServer.sendImageToServer(it, this@CounterService, uri)
+                                              if (!success) {
+                                                  allSuccess = false
+                                              }
+                                          }
+                                      }
+
+                                      if (!allSuccess) {
+                                          if (retryqueueuriSet.add(uri)) {
+                                              retryUriQueue.add(uri)
+                                          }
+                                      } else {
+                                          retryqueueuriSet.remove(uri)
+                                      }
+                                  }
+                              }
+                          } catch (e: Exception) {
+                              Log.w("RETRYQUEUE", "${e.message}")
+                          }
+                      }
+
 
                       contentObserver?.register()
 
@@ -136,7 +190,7 @@ inner class LocalBinder: Binder(){
                         it.unregister()
                         contentObserver = null
                     }
-
+                    dataExchange.stopServer()
 
                     startForeground(1, buildNotification("File sharing stopped"))
 

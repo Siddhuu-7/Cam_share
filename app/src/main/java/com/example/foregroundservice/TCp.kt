@@ -5,10 +5,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ContentValues
 import android.content.Context
+import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 
 import android.net.Uri
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
@@ -17,9 +17,6 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.BufferedReader
@@ -33,7 +30,6 @@ import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.io.PrintWriter
-import java.net.InetAddress
 
 open class TCp(
     private val serviceScope: CoroutineScope,
@@ -90,10 +86,10 @@ open class TCp(
         }
     }
 
-    fun sendImageToServer(serverIp: String, context: Context, imageUri: Uri?) {
+    fun sendImageToServer(serverIp: String, context: Context, imageUri: Uri?): Boolean {
         if (imageUri == null) {
             Log.e("TCPClient", "Image URI is null.")
-            return
+            return false
         }
 
         var socket: Socket? = null
@@ -107,7 +103,7 @@ open class TCp(
 
             if (inputStream == null) {
                 Log.e("TCPClient", "Unable to open InputStream.")
-                return
+                return false
             }
 
             val buffer = ByteArray(4096)
@@ -119,14 +115,25 @@ open class TCp(
 
             outputStream.flush()
             Log.d("TCPClient", "Image sent successfully.")
+            return true
+
+        } catch (e: IllegalStateException) {
+            Log.e("TCPClient", "IllegalStateException: ${e.message}", e)
+            return false
         } catch (e: Exception) {
             Log.e("TCPClient", "Error sending image: ${e.message}", e)
+            return false
         } finally {
-            inputStream?.close()
-            outputStream?.close()
-            socket?.close()
+            try {
+                inputStream?.close()
+                outputStream?.close()
+                socket?.close()
+            } catch (e: Exception) {
+                Log.w("TCPClient", "Error closing resources: ${e.message}", e)
+            }
         }
     }
+
 }
 
 class FileOperation(private val context: Context) {
@@ -207,7 +214,9 @@ class FileOperation(private val context: Context) {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+            .setSound(null)
             .build()
+
 
         notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
@@ -216,7 +225,7 @@ class FileOperation(private val context: Context) {
         context: Context,
         file: File,
         fileName: String,
-        albumName: String = "Foreground"
+        albumName: String
     ) {
         var fos: OutputStream? = null
         var imageUri: Uri? = null
@@ -282,56 +291,54 @@ class DataExchange(
 ) {
     private val serverPort = 8888
     private var serverSocket: ServerSocket? = null
-    private var serverJob: Job? = null
 
-    private val localIP = getLocalIpAddress(context)
 
-    fun startServer() {
-        if (serverJob?.isActive == true) {
-            Log.d("DataExchange", "Server already running")
-            return
-        }
 
-        serverJob = serviceScope.launch(Dispatchers.IO) {
-            try {
-                serverSocket = ServerSocket(serverPort).apply {
-                    soTimeout = 1000 // 1s timeout to check cancellation
-                }
-                Log.d("DataExchange", "Server started on port $serverPort")
 
-                while (isActive) {
-                    try {
-                        val client = serverSocket!!.accept()
-                        launch {
-                            val inputStream = client.getInputStream()
-                            val metadataReader = BufferedReader(InputStreamReader(inputStream))
-                            val metadata = metadataReader.readLine()
-                            Log.d("MetaData", metadata ?: "No metadata received")
-                            client.close()
-                        }
-                    } catch (e: SocketTimeoutException) {
-                        // Timeout is expected
-                    } catch (e: Exception) {
-                        Log.e("DataExchange", "Accept error: ${e.message}")
-                        break
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("DataExchange", "Server error: ${e.message}")
-            } finally {
+
+   suspend fun startServer(ipAddress:((String)-> Unit) ={}){
+        try {
+            serverSocket = ServerSocket(serverPort).apply {
+                soTimeout = 1000 // 1-second timeout to enable shutdown
+            }
+
+            Log.d("CounterService", "Server started on port $serverPort")
+
+            while (serviceScope.isActive) {
                 try {
-                    serverSocket?.close()
-                    Log.d("DataExchange", "Server socket closed")
-                } catch (e: Exception) {
-                    Log.e("DataExchange", "Close error: ${e.message}")
+                    val client = serverSocket!!.accept()
+                    serviceScope.launch {
+                        var inputStream=client.getInputStream()
+                        var line= BufferedReader(InputStreamReader(inputStream))
+                        val receivedData = line.readLine().split(":")
+                        val output= PrintWriter(client.getOutputStream(),true)
+                        val clientdevice=receivedData[0]
+                        val localIP=receivedData[1]
+                        showConnectiondNotification(clientdevice)
+                        Log.v("DATAEXCHANGE"," server Recived Data${receivedData[0]}:${receivedData[1]}")
+                        if (localIP != "null") {
+                            ipAddress(localIP)
+                        }
+                        var model= Build.MODEL
+                        var manufacturer= Build.MANUFACTURER
+                        var device="$model $manufacturer"
+                        output.println(device)
+
+                    }
+                } catch (e: SocketTimeoutException) {
+                    // Loop again to check for isActive
                 }
             }
+        } catch (e: Exception) {
+            Log.e("DATA EXCHANGE", "Server error: ${e.message}")
+        } finally {
+            serverSocket?.close()
+            Log.d("DATACENTER", "Server stopped port 8888")
         }
     }
 
     fun stopServer() {
         try {
-            serverJob?.cancel()
             serverSocket?.close()
             Log.w("DataExchange", "Server stop requested")
         } catch (e: Exception) {
@@ -339,14 +346,25 @@ class DataExchange(
         }
     }
 
-    fun client(metaData: String?) {
+    fun client(serverIP: String?) {
+            var model= Build.MODEL
+            var manufacturer= Build.MANUFACTURER
+
+
         serviceScope.launch(Dispatchers.IO) {
             var socket: Socket? = null
             try {
-                socket = Socket(localIP, serverPort)
+                socket = Socket(serverIP, serverPort)
+                var localIP=socket.localAddress.hostAddress!!
+                var device="$model $manufacturer:$localIP"
                 val writer = PrintWriter(socket.getOutputStream(), true)
-                writer.println(metaData)
-                Log.d("Client", "Metadata sent: $metaData")
+                Log.d("Client", "Metadata sent: $serverIP:$localIP")
+                writer.println(device)
+                var inputStream=socket.getInputStream()
+                var line= BufferedReader(InputStreamReader(inputStream))
+                val receivedData = line.readLine()
+                showConnectiondNotification(receivedData)
+                Log.v("DATAEXCHANGE"," client Recived Data${receivedData}")
             } catch (e: Exception) {
                 Log.e("Client", "Error: ${e.message}")
             } finally {
@@ -355,17 +373,32 @@ class DataExchange(
         }
     }
 
-    private fun getLocalIpAddress(context: Context): String? {
-        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val ipInt = wifiManager.connectionInfo.ipAddress
-        if (ipInt == 0) return null
-        return InetAddress.getByAddress(
-            byteArrayOf(
-                (ipInt and 0xff).toByte(),
-                (ipInt shr 8 and 0xff).toByte(),
-                (ipInt shr 16 and 0xff).toByte(),
-                (ipInt shr 24 and 0xff).toByte()
-            )
-        ).hostAddress
+    private fun showConnectiondNotification(device: String) {
+        val channelId = "Connection1234"
+        val channelName = "Connection"
+        val notificationManager = context.getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
+            notificationManager.createNotificationChannel(channel)
+        }
+        val intent= Intent(context, MainActivity::class.java).apply {
+            flags= Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent=PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context,channelId)
+            .setContentTitle("Cam Share")
+            .setContentText("Connected to ${device}")
+            .setContentIntent(pendingIntent)
+            .setSmallIcon(R.drawable.ic_notification_icon)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
 }
