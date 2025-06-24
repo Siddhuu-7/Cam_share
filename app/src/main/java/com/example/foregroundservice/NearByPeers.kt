@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 class NearByPeers(
     private val centralDataStore: CentralDataStore? = null
@@ -88,10 +89,7 @@ class NearByPeers(
 
 
         val peerList = centralDataStore?.peers?.collectAsState(emptyList())?.value ?: emptyList()
-
-        LaunchedEffect(peerList) {
-            Log.d("PeerListTest", "Peer list updated: ${peerList.joinToString { it.deviceName ?: "Unknown" }}")
-        }
+        val deviceList = centralDataStore?.deviceList?.collectAsState(emptyList())?.value ?: emptyList()
 
         Box(
             modifier = Modifier
@@ -124,7 +122,7 @@ class NearByPeers(
 
                 // Device List Section
                 DeviceDiscoveryContent(
-                    peerList = peerList,
+                    peerList = deviceList,
                     onDeviceClick = launqr
                 )
             }
@@ -236,7 +234,7 @@ class NearByPeers(
 
     @Composable
     private fun DeviceDiscoveryContent(
-        peerList: List<WifiP2pDevice>,
+        peerList:  List<CentralDataStore.DEVICES>,
         onDeviceClick: (WifiP2pDevice) -> Unit
     ) {
         Card(
@@ -259,8 +257,9 @@ class NearByPeers(
                     EmptyDeviceState()
                 } else {
                     DeviceList(
-                        devices = peerList,
-                        onDeviceClick = onDeviceClick
+                        deviceList = peerList,
+                        onDeviceClick = onDeviceClick,
+
                     )
                 }
             }
@@ -276,7 +275,7 @@ class NearByPeers(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Animated searching icon
+
             val infiniteTransition = rememberInfiniteTransition()
             val pulseAlpha by infiniteTransition.animateFloat(
                 initialValue = 0.3f,
@@ -319,7 +318,7 @@ class NearByPeers(
 
     @Composable
     private fun DeviceList(
-        devices: List<WifiP2pDevice>,
+        deviceList: List<CentralDataStore.DEVICES>,
         onDeviceClick: (WifiP2pDevice) -> Unit
     ) {
         Column(
@@ -340,7 +339,7 @@ class NearByPeers(
                 )
 
                 Text(
-                    text = "${devices.size} found",
+                    text = "${deviceList.size} found",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -353,13 +352,14 @@ class NearByPeers(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                itemsIndexed(devices, key = { _, device -> device.deviceAddress }) { index, device ->
+                itemsIndexed(deviceList, key = { _, item  -> item.device.deviceAddress }) { index, item ->
                     DeviceListItem(
-                        device = device,
+                        device = item.device,
                         index = index + 1,
+                        CONNECTION_STATUS = item.CONNECTION_STATUS,
                         onClick = {
-                            Log.d("DeviceListArea", "Clicked device: ${device.deviceName}")
-                            onDeviceClick(device)
+                            Log.d("DeviceListArea", "Clicked device: ${item.device.deviceName}")
+                            onDeviceClick(item.device)
                         }
                     )
                 }
@@ -371,9 +371,10 @@ class NearByPeers(
     private fun DeviceListItem(
         device: WifiP2pDevice,
         index: Int,
+        CONNECTION_STATUS: String,
         onClick: () -> Unit
     ) {
-        val connectionState = centralDataStore?.connection?.collectAsState("")?.value ?: ""
+
 
         var isPressed by remember { mutableStateOf(false) }
         val scale by animateFloatAsState(
@@ -386,7 +387,7 @@ class NearByPeers(
                 .fillMaxWidth()
                 .graphicsLayer(scaleX = scale, scaleY = scale)
                 .then(
-                    if (connectionState != "Connected") {
+                    if (CONNECTION_STATUS != "Connected") {
                         Modifier.clickable {
                             isPressed = true
                             onClick()
@@ -456,11 +457,11 @@ class NearByPeers(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    ConnectionStatusChip()
+                    ConnectionStatusChip(CONNECTION_STATUS)
                 }
 
                 // Arrow Icon
-                if (connectionState != "Connected") {
+                if (CONNECTION_STATUS != "Connected") {
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowRight,
                         contentDescription = null,
@@ -473,7 +474,7 @@ class NearByPeers(
 
         LaunchedEffect(isPressed) {
             if (isPressed) {
-                kotlinx.coroutines.delay(150)
+                delay(150)
                 isPressed = false
             }
         }
@@ -526,9 +527,11 @@ class NearByPeers(
     }
 
     @Composable
-    private fun ConnectionStatusChip() {
-        val connectionState = centralDataStore?.connection?.collectAsState("")?.value ?: ""
-        val statusText = if (connectionState.isNotBlank()) connectionState else "Available"
+    private fun ConnectionStatusChip(
+        CONNECTION_STATUS: String
+    ) {
+//        val connectionState = centralDataStore?.connection?.collectAsState("")?.value ?: ""
+        val statusText = if (CONNECTION_STATUS.isNotBlank()) CONNECTION_STATUS else "Available"
 
         val statusColor = when (statusText) {
             "Connected" -> Color(0xFF4CAF50)

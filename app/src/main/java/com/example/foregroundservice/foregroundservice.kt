@@ -11,20 +11,20 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import android.net.Uri
 import java.util.Collections
 
-class CounterService : Service() {
+class CounterService(
+
+) : Service() {
 
     private val binder =LocalBinder()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val CHANNEL_ID = "counter_service_channel"
     private lateinit var tcpServer: TCp
-
     private var contentObserver: MediaStoreChanges? = null
     private lateinit var dataExchange: DataExchange
     private val retryUriQueue: ConcurrentLinkedQueue<Uri> = ConcurrentLinkedQueue()
     private val seenUris: MutableSet<Uri> = Collections.synchronizedSet(mutableSetOf())
     private val ipqueues : ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
     private val retryqueueuriSet= Collections.synchronizedSet(mutableSetOf<Uri>())
-
     private var ip: String? = null
     private var isServerRunning=false
     private var isShareModeon=false

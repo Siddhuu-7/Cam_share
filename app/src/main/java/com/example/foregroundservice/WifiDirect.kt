@@ -1,12 +1,8 @@
 package com.example.foregroundservice
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Context.NOTIFICATION_SERVICE
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -18,7 +14,7 @@ import android.net.wifi.p2p.WifiP2pManager
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
-import androidx.core.app.NotificationCompat
+import androidx.compose.runtime.mutableStateOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -36,6 +32,8 @@ class WifiDirectManager(
 
 
 ) {
+
+    private var groupownermac: String=""
     enum class ConnectionSate{
         Connecting,
         Connected,
@@ -110,7 +108,7 @@ class WifiDirectManager(
                             object : WifiP2pManager.ConnectionInfoListener {
                                 override fun onConnectionInfoAvailable(info: WifiP2pInfo?) {
                                     if (info == null) {
-                                        centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
+//                                        centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
                                         return
 
                                     }
@@ -130,7 +128,11 @@ class WifiDirectManager(
                                                 "Client connected to Group Owner with IP $serverIp."
                                             )
                                             ipAddress(serverIp)
-                                            centralDataStore?.updateConnection(ConnectionSate.Connected.toString())
+
+                                            centralDataStore?.updateConnection(
+                                                CentralDataStore.CONNECTIONDEVICE(groupownermac, ConnectionSate.Connected.toString())
+                                            )
+
 
 
                                             dataExchange.client(serverIp)
@@ -144,10 +146,14 @@ class WifiDirectManager(
                             })
 
 
-                    }else{
-                        centralDataStore?.updateConnection(ConnectionSate.Disconnected.toString())
+                    }else {
+                        centralDataStore?.updateConnection(
+                            CentralDataStore.CONNECTIONDEVICE("", ConnectionSate.Disconnected.toString())
+                        )
+
                     }
-                }
+
+            }
             }
         }
     }
@@ -171,8 +177,12 @@ class WifiDirectManager(
 
         wifiP2pManager.connect(channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                centralDataStore?.updateConnection(ConnectionSate.Connecting.toString())
-               response(device)
+                groupownermac=device.deviceAddress
+                centralDataStore?.updateConnection(
+                    CentralDataStore.CONNECTIONDEVICE(device.deviceAddress, ConnectionSate.Connecting.toString())
+                )
+
+                response(device)
                 Log.d("WifiP2p", "Connecting.${device.deviceAddress}")
 
 
@@ -180,9 +190,13 @@ class WifiDirectManager(
 
             override fun onFailure(reason: Int) {
                 failedresponse(device)
-                centralDataStore?.updateConnection(ConnectionSate.Failed.toString())
+                centralDataStore?.updateConnection(
+                    CentralDataStore.CONNECTIONDEVICE(device.deviceAddress, ConnectionSate.Failed.toString())
+                )
+
                 Log.d("WifiP2p", "Connectivity failed with code $reason.")
             }
+
         })
     }
 
@@ -237,7 +251,7 @@ class WifiDirectManager(
 
         if (!hasPermission) {
             Toast.makeText(context, "Permission missing.", Toast.LENGTH_SHORT).show()
-            centralDataStore?.updateIsGroupCreation(false)
+
             return
         }
 
@@ -245,7 +259,7 @@ class WifiDirectManager(
             override fun onSuccess() {
                 Toast.makeText(context, "Group is being created.", Toast.LENGTH_SHORT).show()
                 Log.d("WifiP2p", "Group is being created.")
-                centralDataStore?.updateIsGroupCreation(true)
+
 
 
             }
@@ -254,7 +268,7 @@ class WifiDirectManager(
                 Toast.makeText(context, "Start Again.", Toast.LENGTH_SHORT).show()
                 Log.d("WifiP2p", "Create group failed with code $reason.")
                 removeGroup()
-                centralDataStore?.updateIsGroupCreation(false)
+
             }
         })
     }
