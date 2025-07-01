@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.SharedPreferences
 import android.graphics.BitmapFactory
 import android.net.wifi.WifiManager
 import android.net.wifi.p2p.WifiP2pDevice
@@ -22,6 +23,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.unit.dp
@@ -30,6 +33,7 @@ import com.example.foregroundservice.ui.theme.ForegroundServiceTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -41,7 +45,6 @@ import kotlinx.coroutines.launch
 
 
 class MainActivity : ComponentActivity() {
-
 
 
 
@@ -109,7 +112,7 @@ class MainActivity : ComponentActivity() {
             centralDataStore,
         ){
             Log.w("WIFIDIRECT","$it")
-            myBoundService?.setIpAddress(it!!)
+
         }
         wifiDirectManager.registerReceiver()
         lifecycleScope.launch{
@@ -240,6 +243,33 @@ class MainActivity : ComponentActivity() {
                             }
                         )
                     }
+
+                    if (myBoundService?.shareMode() == true) {
+                        currentState.value = AppState.IDLE
+
+                        AlertDialog(
+                            onDismissRequest = { showDialog.value = false },
+                            confirmButton = {
+                                TextButton(onClick = { showDialog.value = false }) {
+                                    Text("OK", color = Color.Red)
+                                }
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Warning",
+                                    tint = Color.Red
+                                )
+                            },
+                            title = {
+                                Text("Warning", color = Color.Red)
+                            },
+                            text = {
+                                Text("Share Mode is currently ON. Please stop it before proceeding.")
+                            }
+                        )
+                    }
+
                 }
             }
         }
@@ -249,6 +279,10 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
 
         stopAllServices()
+        getSharedPreferences("camshare",MODE_PRIVATE)
+            .edit()
+            .putBoolean("Sharing",false)
+            .apply()
 
     }
 
@@ -340,9 +374,15 @@ class MainActivity : ComponentActivity() {
 
             Spacer(modifier = Modifier.height(32.dp))
 
+
+
+
+
+
+
             when (currentState.value) {
                 AppState.IDLE -> {
-                    // Show both start buttons when idle
+
                     Button(
                         onClick = onStartReceiveService,
                         modifier = Modifier
@@ -368,28 +408,28 @@ class MainActivity : ComponentActivity() {
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    Button(
-                        onClick = onStartShareMode,
-                        modifier = Modifier
-                            .fillMaxWidth(0.8f)
-                            .height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary,
-                            contentColor = MaterialTheme.colorScheme.onSecondary
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(
-                            defaultElevation = 4.dp,
-                            pressedElevation = 8.dp
-                        )
-                    ) {
-                        Text(
-                            text = "Start Share Mode (Scan QR)",
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontWeight = FontWeight.Medium
-                            )
-                        )
-                    }
+//                    Button(
+//                        onClick = onStartShareMode,
+//                        modifier = Modifier
+//                            .fillMaxWidth(0.8f)
+//                            .height(56.dp),
+//                        shape = RoundedCornerShape(16.dp),
+//                        colors = ButtonDefaults.buttonColors(
+//                            containerColor = MaterialTheme.colorScheme.secondary,
+//                            contentColor = MaterialTheme.colorScheme.onSecondary
+//                        ),
+//                        elevation = ButtonDefaults.buttonElevation(
+//                            defaultElevation = 4.dp,
+//                            pressedElevation = 8.dp
+//                        )
+//                    ) {
+//                        Text(
+//                            text = "Start Share Mode (Scan QR)",
+//                            style = MaterialTheme.typography.bodyLarge.copy(
+//                                fontWeight = FontWeight.Medium
+//                            )
+//                        )
+//                    }
                 }
 
                 AppState.RECEIVING -> {
@@ -503,7 +543,7 @@ class MainActivity : ComponentActivity() {
         startService(intent)
 
         wifiDirectManager.createWifiDirectGroup()
-        currentState.value = AppState.SHARING
+//        currentState.value = AppState.SHARING
         Log.d("MainActivity", "Started share mode")
     }
 

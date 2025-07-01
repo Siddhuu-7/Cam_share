@@ -9,6 +9,7 @@ import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import android.net.Uri
+import androidx.compose.runtime.mutableStateOf
 import java.util.Collections
 
 class CounterService(
@@ -26,14 +27,14 @@ class CounterService(
     private val ipqueues : ConcurrentLinkedQueue<String> = ConcurrentLinkedQueue()
     private val retryqueueuriSet= Collections.synchronizedSet(mutableSetOf<Uri>())
     private var ip: String? = null
-    private var isServerRunning=false
-    private var isShareModeon=false
+    private var isServerRunning= mutableStateOf(false)
+    private var isShareModeon=mutableStateOf(false)
 inner class LocalBinder: Binder(){
     fun getService(): CounterService=this@CounterService
 }
-    fun setIpAddress(Ip: String){
-//       ip=Ip
-        Log.wtf("COUNTERSERVICE","IP is ASSESING TO ip $Ip")
+    fun shareMode(): Boolean{
+        Log.d("STATE","${isShareModeon.value}a")
+            return isShareModeon.value
     }
     override fun onBind(intent: Intent) =binder
 
@@ -54,8 +55,8 @@ inner class LocalBinder: Binder(){
         when (action) {
             "START" -> {
 
-                if (!isShareModeon){
-                    isServerRunning=true
+                if (!isShareModeon.value){
+                    isServerRunning.value=true
                     startForeground(1, buildNotification("Connection Established 🛜..."))
 
 
@@ -77,11 +78,11 @@ inner class LocalBinder: Binder(){
 
 
             "SHARE" -> {
-              if (!isServerRunning){
+              if (!isServerRunning.value){
 
-                  isShareModeon=true
+                  isShareModeon.value=true
                   try {
-                      startForeground(1, buildNotification("File sharing started..."))
+                      startForeground(1, buildNotification("File sharing started...",true))
                       Log.d("IPAddress",ip.toString())
                   } catch (e: Exception) {
                       Log.e("CounterService", "Failed to start foreground service", e)
@@ -185,19 +186,19 @@ inner class LocalBinder: Binder(){
             }
 
             "STOP_SHARE" -> {
-                    isShareModeon=false
+                    isShareModeon.value=false
                     contentObserver?.let {
                         it.unregister()
                         contentObserver = null
                     }
                     dataExchange.stopServer()
 
-                    startForeground(1, buildNotification("File sharing stopped"))
+                    startForeground(1, buildNotification("File sharing stopped",true))
 
             }
 
             "STOP" -> {
-               isServerRunning=false
+               isServerRunning.value=false
                 stopSelf()
                 tcpServer.stopServer()
                 startForeground(1, buildNotification("Connection stopped 👾..."))
@@ -242,7 +243,7 @@ inner class LocalBinder: Binder(){
         }
     }
 
-    private fun buildNotification(context: String = "Instant Server running..."): Notification {
+    private fun buildNotification(context: String = "Instant Server running..." ,bol: Boolean=false): Notification {
              val intent= Intent(this, MainActivity::class.java).apply {
                  flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
              }
@@ -255,7 +256,11 @@ inner class LocalBinder: Binder(){
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Instant Share Service")
             .setContentText(context)
-            .setContentIntent(pendingIntent)
+            .setContentIntent(if (!bol){
+                pendingIntent
+            }else{
+                null
+            })
             .setSmallIcon(R.drawable.ic_notification_icon)
             .build()
     }
